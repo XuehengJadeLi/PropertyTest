@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no">
+  <title>Rotterdam Property Data Viewer (Debug Mode)</title>
+  <style>
+    html, body, #cesiumContainer {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: black;
+    }
+    #loadingOverlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.8);
+      color: white;
+      font-family: sans-serif;
+      padding: 20px;
+      z-index: 1000;
+    }
+    #debugInfo {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 10px;
+      font-family: monospace;
+      max-width: 500px;
+      max-height: 80%;
+      overflow: auto;
+      z-index: 1000;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 10px;
+      z-index: 1000;
+    }
+    .console-entry {
+      margin-bottom: 5px;
+      border-bottom: 1px solid #444;
+      padding-bottom: 5px;
+    }
+    .error { color: #ff5252; }
+    .warn { color: #ffbc00; }
+    .info { color: #2196f3; }
+    button {
+      margin: 5px;
+      padding: 5px 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="loadingOverlay">
+    <h2>Loading Rotterdam Property Data Viewer...</h2>
+    <div id="loadingStatus">Initializing...</div>
+  </div>
+  
+  <div id="debugInfo">
+    <h3>Debug Console</h3>
+    <div id="consoleOutput"></div>
+  </div>
+  
+  <div id="controls">
+    <button id="resetCamera">Reset Camera</button>
+    <button id="toggleTerrain">Toggle Terrain</button>
+    <button id="toggleImagery">Toggle Imagery</button>
+    <button id="showAssetStatus">Check Assets</button>
+  </div>
+  
+  <div id="cesiumContainer"></div>
+  
+  <script>
+    // Debug console
+    const consoleOutput = document.getElementById('consoleOutput');
+    const loadingStatus = document.getElementById('loadingStatus');
+    let logCount = 0;
+    
+    // Override console methods
+    const originalConsole = {
+      log: console.log,
+      warn: console.warn,
+      error: console.error,
+      info: console.info
+    };
+    
+    function updateLoadingStatus(message) {
+      loadingStatus.textContent = message;
+    }
+    
+    function addLogEntry(type, args) {
+      if (logCount > 100) {
+        // Limit entries to prevent browser slowdown
+        const firstChild = consoleOutput.firstChild;
+        if (firstChild) consoleOutput.removeChild(firstChild);
+      } else {
+        logCount++;
+      }
+      
+      const entry = document.createElement('div');
+      entry.className = `console-entry ${type}`;
+      
+      let content = '';
+      for (const arg of args) {
+        if (typeof arg === 'object') {
+          try {
+            content += JSON.stringify(arg) + ' ';
+          } catch (e) {
+            content += arg + ' ';
+          }
+        } else {
+          content += arg + ' ';
+        }
+      }
+      
+      entry.textContent = `[${type}] ${content}`;
+      consoleOutput.appendChild(entry);
+      consoleOutput.scrollTop = consoleOutput.scrollHeight;
+      
+      // Update loading status for important messages
+      if (type === 'error') {
+        updateLoadingStatus(`Error: ${content.substring(0, 50)}...`);
+      } else if (content.includes('load') || content.includes('init')) {
+        updateLoadingStatus(content);
+      }
+    }
+    
+    console.log = function() {
+      originalConsole.log.apply(console, arguments);
+      addLogEntry('log', arguments);
+    };
+    
+    console.warn = function() {
+      originalConsole.warn.apply(console, arguments);
+      addLogEntry('warn', arguments);
+    };
+    
+    console.error = function() {
+      originalConsole.error.apply(console, arguments);
+      addLogEntry('error', arguments);
+    };
+    
+    console.info = function() {
+      originalConsole.info.apply(console, arguments);
+      addLogEntry('info', arguments);
+    };
+    
+    // Handle global errors
+    window.onerror = function(message, source, lineno, colno, error) {
+      console.error(`Error: ${message} at line ${lineno}:${colno}`);
+      if (error && error.stack) {
+        console.error(`Stack: ${error.stack}`);
+      }
+      return true;
+    };
+    
+    // Initialize loading sequence
+    let cesiumLoaded = false;
+    
+    window.addEventListener('load', function() {
+      console.log('Page loaded, waiting for app.js...');
+      
+      // Set timeout to check if Cesium loads
+      setTimeout(function() {
+        if (!cesiumLoaded) {
+          console.error('Cesium failed to load within 10 seconds. Check network requests in browser DevTools.');
+          
+          // Check for app.js
+          fetch('/app.js')
+            .then(response => {
+              if (response.ok) {
+                console.info('app.js file exists and is accessible');
+              } else {
+                console.error(`app.js returned status: ${response.status}`);
+              }
+            })
+            .catch(error => {
+              console.error('Failed to check app.js:', error);
+            });
+          
+          // Check API status
+          fetch('/api/status')
+            .then(response => response.json())
+            .then(data => {
+              console.info('API Status:', data);
+            })
+            .catch(error => {
+              console.error('Failed to check API:', error);
+            });
+        }
+      }, 10000);
+    });
+    
+    // Setup debug controls
+    document.getElementById('resetCamera').addEventListener('click', function() {
+      if (window.viewer) {
+        try {
+          console.log('Resetting camera position...');
+          window.viewer.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(4.47917, 51.9225, 2000),
+            orientation: {
+              heading: Cesium.Math.toRadians(30),
+              pitch: Cesium.Math.toRadians(-35),
+              roll: 0
+            }
+          });
+        } catch (e) {
+          console.error('Failed to reset camera:', e);
+        }
+      } else {
+        console.error('Viewer not initialized');
+      }
+    });
+    
+    document.getElementById('toggleTerrain').addEventListener('click', function() {
+      if (window.viewer) {
+        try {
+          console.log('Toggling terrain...');
+          if (window.viewer.terrainProvider._url) {
+            window.viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+          } else {
+            Cesium.createWorldTerrainAsync()
+              .then(terrain => {
+                window.viewer.terrainProvider = terrain;
+              });
+          }
+        } catch (e) {
+          console.error('Failed to toggle terrain:', e);
+        }
+      }
+    });
+    
+    document.getElementById('toggleImagery').addEventListener('click', function() {
+      if (window.viewer) {
+        try {
+          console.log('Toggling imagery...');
+          if (window.viewer.imageryLayers.length > 0) {
+            window.viewer.imageryLayers.removeAll();
+          } else {
+            Cesium.createWorldImageryAsync()
+              .then(imagery => {
+                window.viewer.imageryLayers.addImageryProvider(imagery);
+              });
+          }
+        } catch (e) {
+          console.error('Failed to toggle imagery:', e);
+        }
+      }
+    });
+    
+    document.getElementById('showAssetStatus').addEventListener('click', function() {
+      if (window.Cesium && window.Cesium.Ion) {
+        try {
+          console.log('Cesium Ion Token:', window.Cesium.Ion.defaultAccessToken ? 'Set ✓' : 'Not Set ✗');
+          console.log('Asset IDs:', window.assetIds || 'Not available');
+          
+          if (window.viewer) {
+            console.log('Viewer initialized:', '✓');
+            console.log('Scene primitives:', window.viewer.scene.primitives.length);
+            
+            // Log all primitives
+            for (let i = 0; i < window.viewer.scene.primitives.length; i++) {
+              const primitive = window.viewer.scene.primitives.get(i);
+              console.log(`Primitive ${i}:`, primitive.constructor.name);
+            }
+          } else {
+            console.log('Viewer initialized:', '✗');
+          }
+        } catch (e) {
+          console.error('Failed to show asset status:', e);
+        }
+      } else {
+        console.error('Cesium not loaded');
+      }
+    });
+  </script>
+  
+  <script src="app.js"></script>
+  
+  <script>
+    // Set indicator that Cesium loaded
+    setTimeout(function() {
+      cesiumLoaded = true;
+      
+      // Hide loading overlay when app is ready or after 20 seconds
+      setTimeout(function() {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        loadingOverlay.style.display = 'none';
+      }, 20000);
+    }, 3000);
+  </script>
+</body>
+</html> 
